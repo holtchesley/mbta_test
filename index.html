@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>MBTA CL Times</title>
+        <style>
+         table {
+             width:100%;
+             text-align:center;
+         }
+        </style>
+    </head>
+
+    <body>
+        <script type="text/javascript">
+         window.api_key="e32652104eee4b67819ca4896fae8150";
+         window.db = {};
+
+         function streamPredictions(stations) {
+             // Stream predictions for a given set of stations, loading related routes and vehicles.
+             const stationQuery = stations.map(x => x.id).join(",");
+             return new EventSource(`//api-v3.mbta.com/predictions?api_key=${window.api_key}&sort=departure_time&filter%5Bstop%5D=${stationQuery}&include=route,vehicle`);
+         }
+
+         async function getRoutes(stations) {
+             // Do an initial load of routes passing through given stations
+             const stationQuery = stations.map(x => x.id).join(",");
+             const req = await fetch(`//api-v3.mbta.com/routes?filter%5Bstop%5D=${stationQuery}&filter%5Btype%5D=2`);
+             const route_info = await req.json()
+             route_info.data.forEach( datum => {
+                 window.db[datum.id] = datum;
+             })
+         }
+
+         function queryDB() {
+             // Get a list of departure predictions, with the data we'd like to show in the table.
+             let south_station = [];
+             let north_station = [];
+             for(id in window.db) {
+                 const entry = window.db[id];
+                 if (entry.type === 'prediction' && entry.attributes.departure_time) {
+                     const time = new Date(entry.attributes.departure_time);
+                     const direction_id = entry.attributes.direction_id;
+                     const route_id = entry.relationships.route.data.id;
+                     const stop_id = entry.relationships.stop.data.id;
+                     const destination = window.db[route_id].attributes.direction_destinations[direction_id];
+                     const track_number = window.db[stop_id].platform_name;
+                     const status = entry.attributes.status || "Unknown";
+                     if (entry.relationships.stop.data.id.indexOf('outh') > -1) {
+                         south_station.push({time, destination, track_number, status});
+                     } else {
+                         north_station.push({time, destination, track_number, status});
+                     }
+                 }
+             }
+             north_station.sort((a,b) => (a.time - b.time));
+             south_station.sort((a,b) => (a.time - b.time));
+             return {north_station, south_station};
+         }
+
+         function updateFromStream(stream) {
+             function dbMerge(event) {
+                 const event_data = JSON.parse(event.data);
+                 window.db[event_data.id] = event_data;
+             }
+             function dbMergeMany(event) {
+                 const event_array = JSON.parse(event.data);
+                 for (const event_data of event_array) {
+                     window.db[event_data.id] = event_data;
+                 }
+                 react(queryDB())
+             }
+             function remove(event) {
+                 const event_data = JSON.parse(event.data);
+                 delete window.db[event_data.id];
+             }
+
+             stream.addEventListener("reset", dbMergeMany);
+             stream.addEventListener("add", dbMerge);
+             stream.addEventListener("update", dbMerge);
+             stream.addEventListener("remove", remove);
+         }
+
+         function react(data) {
+             function formatRow({time, destination, track_number, status}) {
+                 const formattedTime = time ? `${time.getHours()}:${time.getMinutes() < 10 ? '0' : ''}${time.getMinutes()}` : "TBD";
+                 return `<tr><td>${formattedTime}</td><td>${destination}</td><td>${track_number}</td><td>${status}</td></tr>`
+             }
+             const headers = "<tr><th>Time</th><th>Destination</th><th>Track#</th><th>Status</th></tr>"
+             document.getElementById("north_station").innerHTML = headers + data.north_station.map(formatRow).join("");
+             document.getElementById("south_station").innerHTML = headers + data.south_station.map(formatRow).join("");
+         }
+
+
+
+         async function main() {
+             const stations = [
+                 {"id":"North Station","platform_name":"TBD"},
+                 {"id":"North Station-01","platform_name":"1"},
+                 {"id":"North Station-02","platform_name":"2"},
+                 {"id":"North Station-03","platform_name":"3"},
+                 {"id":"North Station-04","platform_name":"4"},
+                 {"id":"North Station-05","platform_name":"5"},
+                 {"id":"North Station-06","platform_name":"6"},
+                 {"id":"North Station-07","platform_name":"7"},
+                 {"id":"North Station-08","platform_name":"8"},
+                 {"id":"North Station-09","platform_name":"9"},
+                 {"id":"North Station-10","platform_name":"10"},
+                 {"id":"South Station","platform_name":"TBD"},
+                 {"id":"South Station-01","platform_name":"1"},
+                 {"id":"South Station-02","platform_name":"2"},
+                 {"id":"South Station-03","platform_name":"3"},
+                 {"id":"South Station-04","platform_name":"4"},
+                 {"id":"South Station-05","platform_name":"5"},
+                 {"id":"South Station-06","platform_name":"6"},
+                 {"id":"South Station-07","platform_name":"7"},
+                 {"id":"South Station-08","platform_name":"8"},
+                 {"id":"South Station-09","platform_name":"9"},
+                 {"id":"South Station-10","platform_name":"10"},
+                 {"id":"South Station-11","platform_name":"11"},
+                 {"id":"South Station-12","platform_name":"12"},
+                 {"id":"South Station-13","platform_name":"13"}
+             ];
+
+             getRoutes(stations);
+             stations.forEach(station => {
+                 station.type="stop";
+                 window.db[station.id] = station;
+             });
+             const predictions = streamPredictions(stations);
+             updateFromStream(predictions);
+         }
+         main();
+         setInterval(() => {react(queryDB());}, 5000);
+
+        </script>
+        <div>
+            <h1>North Station</h1>
+            <table id="north_station"></table>
+
+            <h1>South Station</h1>
+            <table id="south_station"></table>
+        </div>
+    </body>
+</html>
